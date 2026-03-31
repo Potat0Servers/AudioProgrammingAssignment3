@@ -42,8 +42,23 @@ public:
      * @param outputMidi 私有输出缓冲（专门喂给 Synth 的机枪音符）
      * @param numSamples 当前音频块的采样总数
      */
-    void processBlock(const juce::MidiBuffer& inputMidi, juce::MidiBuffer& outputMidi, int numSamples)
+    void processBlock(const juce::MidiBuffer& inputMidi, juce::MidiBuffer& outputMidi, int numSamples, bool isOn)
     {
+
+        if (!isOn)
+        {
+            // 1. 如果正在琶音时关闭开关，立即发送 Note Off 防止挂音
+            if (currentPlayingNote != -1)
+            {
+                outputMidi.addEvent(juce::MidiMessage::noteOff(1, currentPlayingNote), 0);
+                currentPlayingNote = -1;
+            }
+            // 2. 旁路模式：直接将输入的 MIDI 信号原封不动拷贝到输出
+            outputMidi.addEvents(inputMidi, 0, numSamples, 0);
+            heldNotes.clear();
+            return;
+        }
+
         // ====================================================================
         // 第一层：输入收集（Input Collection） - 只读不写，只更新内部数组
         // ====================================================================

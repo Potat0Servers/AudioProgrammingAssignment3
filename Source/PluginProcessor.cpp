@@ -35,6 +35,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout AudioProgrammingAssignment2A
     newlayout.add(std::make_unique<juce::AudioParameterInt>("BIT_DEPTH", "Bit Depth", 1, 16, 8));
     newlayout.add(std::make_unique<juce::AudioParameterInt>("DOWNSAMPLE_FACTOR", "Downsample Factor", 1, 50, 1));
 
+	// Arpeggiator on/off switch initialization
+    newlayout.add(std::make_unique<juce::AudioParameterBool>("ARP_ON", "Arp On/Off", false));
+
     return newlayout;
 }
 
@@ -72,6 +75,7 @@ AudioProgrammingAssignment2AudioProcessor::AudioProgrammingAssignment2AudioProce
     bitDepth_ptr = apvts.getRawParameterValue("BIT_DEPTH");
 	pulseWidth_ptr = apvts.getRawParameterValue("PULSE_WIDTH");
     downsampleFactor_ptr = apvts.getRawParameterValue("DOWNSAMPLE_FACTOR");
+    arp_on_ptr = apvts.getRawParameterValue("ARP_ON");
 
 
 }
@@ -215,6 +219,7 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
     int bitDepth = bitDepth_ptr->load();
     float pulseWidth = pulseWidth_ptr->load();
     int downsampleFactor = downsampleFactor_ptr->load();
+    bool arpIsOn = arp_on_ptr->load() > 0.5f;
 
 	// loop through all the voices in the synth
     for (int i = 0; i < synth.getNumVoices(); ++i)
@@ -234,19 +239,14 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
     // Arpeggiator
     // =========================================================================
 
-    //myArp.processMidi(midiMessages, buffer.getNumSamples());
-
     // 1. 清空私有缓冲
     arpMidiBuffer.clear();
 
-    // 2. 执行你的新琶音器引擎
-    myArp.processBlock(midiMessages, arpMidiBuffer, buffer.getNumSamples());
+    // 传入开关状态
+    myArp.processBlock(midiMessages, arpMidiBuffer, buffer.getNumSamples(), arpIsOn);
 
     // 3. 拦截销毁宿主的输入，彻底避免 VST3 协议冲突！
     midiMessages.clear();
-
-    // 4. 合成器只吃你的私有缓冲
-    synth.renderNextBlock(buffer, arpMidiBuffer, 0, buffer.getNumSamples());
 
 
 
@@ -256,7 +256,7 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
 
 	// Render the next block of audio from the synth
     // arguments: audio buffer, midi buffer, start sample (0), number of samples
-    synth.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples());
+    synth.renderNextBlock(buffer, arpMidiBuffer, 0, buffer.getNumSamples());
 
 
 

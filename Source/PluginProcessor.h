@@ -77,6 +77,7 @@ private:
     std::atomic <float>* bitDepth_ptr;
     std::atomic <float>* pulseWidth_ptr;
     std::atomic <float>* downsampleFactor_ptr;
+    std::atomic <float>* arp_on_ptr;
 
 	// create a MidiBuffer to hold the MIDI messages that will be processed by the arpeggiator
     juce::MidiBuffer arpMidiBuffer;
