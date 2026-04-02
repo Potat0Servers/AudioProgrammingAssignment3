@@ -4,178 +4,204 @@
 #include <algorithm>
 
 /**
- * @class Arpeggiator
- * @brief 专为 8-bit Chiptune 风格设计的极速琶音器
- * * 采用私有缓冲隔离架构，完美解决 VST3 事件越界崩溃问题与 MIDI 挂音问题。
+ * A high-speed arpeggiator class designed for 8-bit chiptune style effects.
+ *
+ * This class implements a robust MIDI processing logic using a private buffer
+ * architecture to isolate input/output events. 
  */
 class Arpeggiator
 {
 public:
-    Arpeggiator() {}
-    ~Arpeggiator() {}
 
-    // 初始化采样率并重置所有状态
+    /**
+     * Prepares the arpeggiator by initializing variables.
+     *
+     * @param newSampleRate The sample rate at which the audio processor is running.
+     */
     void prepareToPlay(double newSampleRate)
     {
-        sampleRate = newSampleRate;
-        timeInSamples = 0;
-        currentNoteIndex = 0;
-        currentPlayingNote = -1;
-        heldNotes.clear();
-
-        // 默认设置一个琶音速度（例如每秒弹奏 15 个音符，产生极速机枪感）
-        setSpeed(15.0f);
+        sampleRate = newSampleRate;     
+		setSpeed(15.0f);                // set default arpeggio speed to 15 Hz
+		heldNotes.clear();              // clear any held notes
     }
 
-    // 设置琶音速度（频率：Hz）。你可以稍后将其连接到 APVTS 的参数上
+    /**
+     * Sets the playback speed of the arpeggiator.
+     *
+     * This method calculates the number of audio samples each note should last
+     * based on the provided frequency and the current system sample rate.
+     *
+     * @param speedInHz The desired speed in Hertz (notes per second).
+     */
     void setSpeed(float speedInHz)
     {
         if (speedInHz > 0.0f && sampleRate > 0.0) {
-            // 计算每个音符应该持续的采样点数
+            // calculate how many samples each note should last 
             noteDuration = static_cast<int>(sampleRate / speedInHz);
         }
     }
 
-    /**
-     * @brief 核心 DSP 逻辑
-     * @param inputMidi 只读的宿主输入（用于收集用户按键）
-     * @param outputMidi 私有输出缓冲（专门喂给 Synth 的机枪音符）
-     * @param numSamples 当前音频块的采样总数
-     */
+
+     /**
+      * Core DSP logic for the arpeggiator's MIDI processing.
+      * This method manages the timing and generation of MIDI notes based on the
+      * current held keys, or bypasses the effect if the arpeggiator is disabled.
+      *
+      * @param inputMidi  Read-only buffer containing incoming MIDI data from the host.
+      * @param outputMidi Private MIDI buffer to be filled with generated arpeggio notes in MIDI.
+      * @param numSamples The total number of samples in the current audio block.
+      * @param isOn       Boolean flag indicating whether the arpeggiator effect is active.
+      */
     void processBlock(const juce::MidiBuffer& inputMidi, juce::MidiBuffer& outputMidi, int numSamples, bool isOn)
     {
-
+        // Bypass Mode
         if (!isOn)
         {
-            // 1. 如果正在琶音时关闭开关，立即发送 Note Off 防止挂音
+            // if arpoff is triggered during an arpeggio process，send Note Off and reset state variables
             if (currentPlayingNote != -1)
             {
-                outputMidi.addEvent(juce::MidiMessage::noteOff(1, currentPlayingNote), 0);
+				// send note off to the correct channel, and reset the state variables
+                outputMidi.addEvent(juce::MidiMessage::noteOff(currentPlayingChannel, currentPlayingNote), 0);
                 currentPlayingNote = -1;
+                currentPlayingChannel = -1;
             }
-            // 2. 旁路模式：直接将输入的 MIDI 信号原封不动拷贝到输出
+
+			// send through all incoming MIDI events without modification, and clear the held notes state
             outputMidi.addEvents(inputMidi, 0, numSamples, 0);
             heldNotes.clear();
+
+            // exit early
             return;
         }
 
+
         // ====================================================================
-        // 第一层：输入收集（Input Collection） - 只读不写，只更新内部数组
+		// Processing of Input MIDI 
         // ====================================================================
         for (const auto meta : inputMidi)
         {
+			// get midi message
             auto msg = meta.getMessage();
 
-            // 如果是按下音符
+            // if it's a note on message, add the note to the heldNotes vector
             if (msg.isNoteOn())
             {
-                // 新增：同时获取音高和通道
+                // create a new ArpNote struct
                 ArpNote newNote{ msg.getNoteNumber(), msg.getChannel() };
-                // 确保数组里没有重复的音，再加进去
+
+                // we only add the note if not found in the heldNotes vector already
                 if (std::find(heldNotes.begin(), heldNotes.end(), newNote) == heldNotes.end())
                 {
-                    heldNotes.push_back(newNote);
-                    std::sort(heldNotes.begin(), heldNotes.end()); // 依然支持向上琶音
+                    heldNotes.push_back(newNote);                   // then add it to the heldNotes vector
+                    std::sort(heldNotes.begin(), heldNotes.end());  // sort the vector so that the arpeggio always goes from low to high
                 }
             }
-            // 如果是松开音符
+            // if it's a note off message, remove the corresponding note from the heldNotes vector
             else if (msg.isNoteOff())
             {
+				// create an ArpNote struct to find the corresponding note in the heldNotes vector
                 ArpNote oldNote{ msg.getNoteNumber(), msg.getChannel() };
+
+				// remove the corresponding note from the heldNotes vector
                 heldNotes.erase(std::remove(heldNotes.begin(), heldNotes.end(), oldNote), heldNotes.end());
             }
         }
 
+
         // ====================================================================
-        // 第二层：终极挂音兜底（Emergency Stop）
+		// Some extra code for more robust Note Off and State Reset...
         // ====================================================================
         if (heldNotes.empty())
         {
-            // 用户手全松开了。检查琶音器是不是还让合成器响着某个音？
+            // if all notes have been released
             if (currentPlayingNote != -1)
             {
-                // 修改：使用记录下来的通道号来关闭音符
+                // send note off to the correct channel, and reset the state variables
                 outputMidi.addEvent(juce::MidiMessage::noteOff(currentPlayingChannel, currentPlayingNote), 0);
                 currentPlayingNote = -1;
-                currentPlayingChannel = -1; // 重置通道哨兵
+                currentPlayingChannel = -1;
             }
 
-            // 时间和步进索引归零，直接结束这一个 Block 的处理
+			// reset timing state variables, and exit early
             timeInSamples = 0;
             currentNoteIndex = 0;
             return;
         }
 
+
         // ====================================================================
-        // 第三层：采样级时钟与发声逻辑（Arp Logic & Output）
+        // Arpeggio Logic & Output
         // ====================================================================
-        // 遍历这一个 Block 里的每一个采样点，确保 MIDI 事件卡在绝对精确的时间点上
+        // loop through each sample in the block
         for (int sample = 0; sample < numSamples; ++sample)
         {
-            // 触发条件：如果是刚按下第一个键（哨兵为 -1），或者内部计时器走到了该切音的时间
+            // if it's the first note，or it's time to switch to the next note
             if (currentPlayingNote == -1 || timeInSamples >= noteDuration)
             {
-                // 1. 先“擦屁股”：关掉上一个正在响的音
+				// if its time to switch to the next note, then turn off the currently playing note
                 if (currentPlayingNote != -1)
                 {
                     outputMidi.addEvent(juce::MidiMessage::noteOff(currentPlayingChannel, currentPlayingNote), sample);
                 }
 
-                // 2. 挑选下一个要响的音符
+                // if this is the first note, we set the index to 0
                 if (currentPlayingNote == -1)
                 {
-                    // 刚刚弹下，从头开始
                     currentNoteIndex = 0;
                 }
+                // if its time to switch to the next note
                 else
                 {
-                    // 索引向后移动一位
+                    // move to the next note index
                     currentNoteIndex++;
-                    // 如果超出了数组长度，就绕回第一个音，形成循环
-                    if (currentNoteIndex >= heldNotes.size()) {
+
+					// if the index goes beyond the size of heldNotes vector, wrap it around to 0
+                    if (currentNoteIndex >= heldNotes.size()) 
+                    {
                         currentNoteIndex = 0;
                     }
                 }
 
-                // 3. 生成新音符并发射
-                ArpNote nextNote = heldNotes[currentNoteIndex]; // 修改：取出来的是个结构体
-                // 修改：精准附着对应的通道号
+                // take the next note to play from the heldNotes vector, and send
+                ArpNote nextNote = heldNotes[currentNoteIndex];
                 outputMidi.addEvent(juce::MidiMessage::noteOn(nextNote.channel, nextNote.note, 1.0f), sample);
 
-                // 4. 更新状态哨兵和计时器
+				// update the state variables and reset the timer
                 currentPlayingNote = nextNote.note;
-                currentPlayingChannel = nextNote.channel; // 更新通道哨兵
+                currentPlayingChannel = nextNote.channel;
                 timeInSamples = 0;
             }
+            // ordinary case
             else
             {
-                // 如果还没到切音的时间，计时器继续往前走
+				// increase the timer
                 timeInSamples++;
             }
         }
     }
 
 private:
-
-    // 新增：定义一个小结构体，把音高和通道号死死绑定在一起
-    struct ArpNote {
+    struct ArpNote          // define a struct that combines MIDI note number and channel
+    {
         int note;
         int channel;
-        // 重载运算符，让 std::find 和 std::sort 能直接看懂这个结构体
+
+        // to make std::find work, only when both note and channel are the same, we consider it as the same note
         bool operator==(const ArpNote& other) const { return note == other.note && channel == other.channel; }
+
+        // to make std::sort work, we only care about the note number
         bool operator<(const ArpNote& other) const { return note < other.note; }
     };
 
-    // --- 音符状态追踪区 ---
-    std::vector <ArpNote> heldNotes;     // 存储当前被按下的所有 MIDI 音符
-    int currentPlayingNote = -1;    // 挂音哨兵：当前正在被琶音器“按着”的那个具体音符
-    int currentPlayingChannel = -1; // 新增：挂音哨兵也要记住当前发声的通道
-    size_t currentNoteIndex = 0;    // 当前轮到了数组里的哪一个音
+	// note info variables
+    std::vector <ArpNote> heldNotes;    // a vector that stores all currently held MIDI notes
+    int currentPlayingNote = -1;        // this variable stores the midi note number of the currently playing note. -1 means no note is currently playing
+	int currentPlayingChannel = -1;     // this variable stores the midi channel of the currently playing note. -1 means no channel is currently playing
+    size_t currentNoteIndex = 0;        // this variable is the index of the currently playing note in the heldNotes vector.
+                                        // Using size_t because we use heldNotes.size() to compare with it
 
-    // --- 时钟与计步区 ---
-    double sampleRate = 44100.0;    // 宿主采样率
-    int timeInSamples = 0;          // 内部采样点计数器
-    int noteDuration = 0;           // 一个琶音音符持续的采样点总数阈值
-
-
+	// time and count variables
+    double sampleRate = 44100.0;    
+    int timeInSamples = 0;          // this variable counts how many samples have passed since the current note started playing
+	int noteDuration = 0;           // this variable counts how many samples each note should last, calculated from the speed parameter and sample rate
 };

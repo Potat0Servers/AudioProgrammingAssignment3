@@ -20,25 +20,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout AudioProgrammingAssignment2A
 
 	// Arguments: parameter ID, parameter name, min value, max value, default value
 
-    // ADSR initialization
-	// use lambda function to avoid code repetition
-    auto addADSR = [&newlayout](const juce::String& prefix, const juce::String& namePrefix) {
-        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_ATTACK", namePrefix + " Attack", 0.001f, 2.0f, 0.3f));
-        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_DECAY", namePrefix + " Decay", 0.001f, 2.0f, 0.1f));
-        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_SUSTAIN", namePrefix + " Sustain", 0.001f, 2.0f, 0.6f));
-        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_RELEASE", namePrefix + " Release", 0.001f, 2.0f, 0.01f));
-        };
+    // ADSR and pulse width initialization for channel 1 and 2
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_ATTACK", "Pulse 1 Attack", 0.001f, 2.0f, 0.001f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_DECAY", "Pulse 1 Decay", 0.001f, 2.0f, 0.1f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_SUSTAIN", "Pulse 1 Sustain", 0.001f, 2.0f, 0.8f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_RELEASE", "Pulse 1 Release", 0.001f, 2.0f, 0.1f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_PULSE_WIDTH", "Pulse 1 Width", 0.0f, 1.0f, 0.25f));
 
-	// generate ADSR parameters for each channel using the above lambda function
-    // pulse width initialization for pulse channels exclusively
-    addADSR("CH1", "Pulse 1");
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_PULSE_WIDTH", "Pulse 1 Width", 0.0f, 1.0f, 0.5f));
-
-    addADSR("CH2", "Pulse 2");
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_ATTACK", "Pulse 2 Attack", 0.001f, 2.0f, 0.01f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_DECAY", "Pulse 2 Decay", 0.001f, 2.0f, 0.1f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_SUSTAIN", "Pulse 2 Sustain", 0.001f, 2.0f, 0.7f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_RELEASE", "Pulse 2 Release", 0.001f, 2.0f, 0.2f));
     newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_PULSE_WIDTH", "Pulse 2 Width", 0.0f, 1.0f, 0.5f));
 
-	addADSR("CH3", "Triangle"); // though nintendo's triangle channel doesn't have a real ADSR, we still give it one for better control
-    addADSR("CH4", "Noise");
+    // triangle channel
+	// though nintendo's triangle channel doesn't have a real ADSR, we still give it one for better control
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH3_ATTACK", "Triangle Attack", 0.001f, 2.0f, 0.01f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH3_DECAY", "Triangle Decay", 0.001f, 2.0f, 0.0f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH3_SUSTAIN", "Triangle Sustain", 0.001f, 2.0f, 1.0f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH3_RELEASE", "Triangle Release", 0.001f, 2.0f, 0.05f));
+
+	// noise channel
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH4_ATTACK", "Noise Attack", 0.001f, 2.0f, 0.001f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH4_DECAY", "Noise Decay", 0.001f, 2.0f, 0.1f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH4_SUSTAIN", "Noise Sustain", 0.001f, 2.0f, 0.0f));
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH4_RELEASE", "Noise Release", 0.001f, 2.0f, 0.05f));
 
 
     // parameters below apply to all channels
@@ -84,8 +90,8 @@ AudioProgrammingAssignment2AudioProcessor::AudioProgrammingAssignment2AudioProce
     synth.addSound(new My_SynthSound(3));
 
 	// channel 4：white noise
-    synth.addVoice(new NoiseVoice(4));
-    synth.addSound(new My_SynthSound(4));
+    synth.addVoice(new NoiseVoice(10));
+    synth.addSound(new My_SynthSound(10));
 
 
 	// use lambda function to link ADSR parameter pointers for each channel, to avoid code repetition
@@ -274,7 +280,7 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
                 adsrData.sustain = ch3Params.sustain_ptr->load();
                 adsrData.release = ch3Params.release_ptr->load();
             }
-            else if (channel == 4) {
+            else if (channel == 10) {
                 adsrData.attack = ch4Params.attack_ptr->load();
                 adsrData.decay = ch4Params.decay_ptr->load();
                 adsrData.sustain = ch4Params.sustain_ptr->load();
