@@ -21,15 +21,27 @@ juce::AudioProcessorValueTreeState::ParameterLayout AudioProgrammingAssignment2A
 	// Arguments: parameter ID, parameter name, min value, max value, default value
 
     // ADSR initialization
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("ATTACK", "Attack", 0.001f, 2.0f, 0.3f));
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("DECAY", "Decay", 0.001f, 2.0f, 0.1f));
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("SUSTAIN", "Sustain", 0.001f, 2.0f, 0.6f));
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("RELEASE", "Release", 0.001f, 2.0f, 0.01f));
+	// use lambda function to avoid code repetition
+    auto addADSR = [&newlayout](const juce::String& prefix, const juce::String& namePrefix) {
+        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_ATTACK", namePrefix + " Attack", 0.001f, 2.0f, 0.3f));
+        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_DECAY", namePrefix + " Decay", 0.001f, 2.0f, 0.1f));
+        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_SUSTAIN", namePrefix + " Sustain", 0.001f, 2.0f, 0.6f));
+        newlayout.add(std::make_unique<juce::AudioParameterFloat>(prefix + "_RELEASE", namePrefix + " Release", 0.001f, 2.0f, 0.01f));
+        };
 
-    // Some Chiptune parameters
+	// generate ADSR parameters for each channel using the above lambda function
+    // pulse width initialization for pulse channels exclusively
+    addADSR("CH1", "Pulse 1");
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH1_PULSE_WIDTH", "Pulse 1 Width", 0.0f, 1.0f, 0.5f));
 
-    // Pulse Width initialization. Ranging from 0 to 1.
-    newlayout.add(std::make_unique<juce::AudioParameterFloat>("PULSE_WIDTH", "Pulse Width", 0.0f, 1.0f, 0.5f));
+    addADSR("CH2", "Pulse 2");
+    newlayout.add(std::make_unique<juce::AudioParameterFloat>("CH2_PULSE_WIDTH", "Pulse 2 Width", 0.0f, 1.0f, 0.5f));
+
+	addADSR("CH3", "Triangle"); // though nintendo's triangle channel doesn't have a real ADSR, we still give it one for better control
+    addADSR("CH4", "Noise");
+
+
+    // parameters below apply to all channels
 
 	// Bit depth and downsample factor initialization. Both only accept integer values.
     newlayout.add(std::make_unique<juce::AudioParameterInt>("BIT_DEPTH", "Bit Depth", 1, 16, 8));
@@ -60,24 +72,43 @@ AudioProgrammingAssignment2AudioProcessor::AudioProgrammingAssignment2AudioProce
            createParameterLayout())
 #endif
 {
-    // adds voiceCount voices to the synth
-    for (int i = 0; i < voiceCount; i++) {
-        synth.addVoice(new My_SynthVoice()); 
-    }
+	// create and add voices and sounds to the synthesiser object, and assign channel numbers to each voice and sound
+	// channel 1 & 2：pulse wave
+    synth.addVoice(new PulseVoice(1));
+    synth.addSound(new My_SynthSound(1));
+    synth.addVoice(new PulseVoice(2));
+    synth.addSound(new My_SynthSound(2));
 
-	// adds a sound to the synth
-    synth.addSound(new My_SynthSound());
+	// channel 3：triangle wave
+    synth.addVoice(new TriangleVoice(3));
+    synth.addSound(new My_SynthSound(3));
 
-    attack_ptr = apvts.getRawParameterValue("ATTACK");
-    decay_ptr = apvts.getRawParameterValue("DECAY");
-    sustain_ptr = apvts.getRawParameterValue("SUSTAIN");
-    release_ptr = apvts.getRawParameterValue("RELEASE");
+	// channel 4：white noise
+    synth.addVoice(new NoiseVoice(4));
+    synth.addSound(new My_SynthSound(4));
+
+
+	// use lambda function to link ADSR parameter pointers for each channel, to avoid code repetition
+    auto linkParams = [this](ChannelParameters& params, const juce::String& prefix) {
+        params.attack_ptr = apvts.getRawParameterValue(prefix + "_ATTACK");
+        params.decay_ptr = apvts.getRawParameterValue(prefix + "_DECAY");
+        params.sustain_ptr = apvts.getRawParameterValue(prefix + "_SUSTAIN");
+        params.release_ptr = apvts.getRawParameterValue(prefix + "_RELEASE");
+        };
+
+    linkParams(ch1Params, "CH1");
+    linkParams(ch2Params, "CH2");
+    linkParams(ch3Params, "CH3");
+    linkParams(ch4Params, "CH4");
+
+	// link pulse width parameters for pulse channels
+    ch1Params.pulseWidth_ptr = apvts.getRawParameterValue("CH1_PULSE_WIDTH");
+    ch2Params.pulseWidth_ptr = apvts.getRawParameterValue("CH2_PULSE_WIDTH");
+
+	// link overall parameters
     bitDepth_ptr = apvts.getRawParameterValue("BIT_DEPTH");
-	pulseWidth_ptr = apvts.getRawParameterValue("PULSE_WIDTH");
     downsampleFactor_ptr = apvts.getRawParameterValue("DOWNSAMPLE_FACTOR");
     arp_on_ptr = apvts.getRawParameterValue("ARP_ON");
-
-
 }
 
 AudioProgrammingAssignment2AudioProcessor::~AudioProgrammingAssignment2AudioProcessor()
@@ -207,29 +238,56 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
 	// update basic parameters
     // =========================================================================
 
-	// Create a struct to hold the ADSR parameters, which will be used to pass new values to the voices.
-    juce::ADSR::Parameters adsrData;
-
-	// Get value of parameters from APVTS.
-	// using pointers to improve performance.
-    adsrData.attack = attack_ptr->load();
-    adsrData.decay = decay_ptr->load();
-    adsrData.sustain = sustain_ptr->load();
-    adsrData.release = release_ptr->load();
+	// get global parameter values that apply to all channels
     int bitDepth = bitDepth_ptr->load();
-    float pulseWidth = pulseWidth_ptr->load();
     int downsampleFactor = downsampleFactor_ptr->load();
     bool arpIsOn = arp_on_ptr->load() > 0.5f;
 
-	// loop through all the voices in the synth
+    // loop through all voices
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
-        // get current voice, and try to cast to My_SynthVoice type
+		// if the voice is an instance of My_SynthVoice, then we can update its parameters
         if (auto* myVoice = dynamic_cast<My_SynthVoice*>(synth.getVoice(i)))
         {
-            // if successful, use the method and update ADSR and pulse width
+            int channel = myVoice->getChannel();
+            juce::ADSR::Parameters adsrData;
+            float currentPulseWidth = 0.5f;
+
+            // get parameter values according to channel number
+            if (channel == 1) {
+                adsrData.attack = ch1Params.attack_ptr->load();
+                adsrData.decay = ch1Params.decay_ptr->load();
+                adsrData.sustain = ch1Params.sustain_ptr->load();
+                adsrData.release = ch1Params.release_ptr->load();
+                currentPulseWidth = ch1Params.pulseWidth_ptr->load();
+            }
+            else if (channel == 2) {
+                adsrData.attack = ch2Params.attack_ptr->load();
+                adsrData.decay = ch2Params.decay_ptr->load();
+                adsrData.sustain = ch2Params.sustain_ptr->load();
+                adsrData.release = ch2Params.release_ptr->load();
+                currentPulseWidth = ch2Params.pulseWidth_ptr->load();
+            }
+            else if (channel == 3) {
+                adsrData.attack = ch3Params.attack_ptr->load();
+                adsrData.decay = ch3Params.decay_ptr->load();
+                adsrData.sustain = ch3Params.sustain_ptr->load();
+                adsrData.release = ch3Params.release_ptr->load();
+            }
+            else if (channel == 4) {
+                adsrData.attack = ch4Params.attack_ptr->load();
+                adsrData.decay = ch4Params.decay_ptr->load();
+                adsrData.sustain = ch4Params.sustain_ptr->load();
+                adsrData.release = ch4Params.release_ptr->load();
+            }
+
+			// send new value to voice
             myVoice->updateADSR(adsrData);
-            myVoice->updatePulseWidth(pulseWidth);
+
+			// only for pulse channels, update pulse width parameter
+            if (auto* pulseVoice = dynamic_cast<PulseVoice*>(myVoice)) {
+                pulseVoice->updatePulseWidth(currentPulseWidth);
+            }
         }
     }
 
@@ -239,13 +297,13 @@ void AudioProgrammingAssignment2AudioProcessor::processBlock (juce::AudioBuffer<
     // Arpeggiator
     // =========================================================================
 
-    // 1. 清空私有缓冲
+    // clear private midi buffer for arpeggiator to write into
     arpMidiBuffer.clear();
 
-    // 传入开关状态
+    // process with arpeggiator with on/off switch
     myArp.processBlock(midiMessages, arpMidiBuffer, buffer.getNumSamples(), arpIsOn);
 
-    // 3. 拦截销毁宿主的输入，彻底避免 VST3 协议冲突！
+    // clear the original midi buffer, just in case 
     midiMessages.clear();
 
 
@@ -315,25 +373,18 @@ juce::AudioProcessorEditor* AudioProgrammingAssignment2AudioProcessor::createEdi
 //==============================================================================
 void AudioProgrammingAssignment2AudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    // 1. 从 APVTS 中复制出一份完整的状态（XML 格式）
     auto state = apvts.copyState();
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
-
-    // 2. 将这个 XML 转换成二进制数据存入 destData，交给宿主保管
     copyXmlToBinary(*xml, destData);
 }
 
 void AudioProgrammingAssignment2AudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
-    // 1. 从二进制数据中尝试还原 XML
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-
-    // 2. 检查 XML 是否有效且名字匹配（我们在构造函数里起的 "PARAMETERS"）
     if (xmlState.get() != nullptr)
     {
         if (xmlState->hasTagName(apvts.state.getType()))
         {
-            // 3. 将 XML 数据推回到 APVTS 中，这会自动触发界面和 DSP 参数的更新
             apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
         }
     }

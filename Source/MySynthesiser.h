@@ -2,6 +2,7 @@
 
 #pragma once
 #include "Oscillator.h"
+#include "WhiteNoise.h"
 
 // ===========================
 // ===========================
@@ -9,9 +10,17 @@
 class My_SynthSound : public juce::SynthesiserSound
 {
 public:
+
+    int myChannel; // Sound's channel number
+
+    // the constructor. Must get channel number as an argument
+    My_SynthSound(int channel) : myChannel(channel) {}
+
     bool appliesToNote      (int) override      { return true; }
     //--------------------------------------------------------------------------
-    bool appliesToChannel   (int) override      { return true; }
+	// the appliesToChannel method decides which sound to trigger for a given MIDI message. 
+    // In this case, we check if the MIDI channel of the input message matches the channel that this Sound is assigned to.
+    bool appliesToChannel   (int midiChannel) override      { return midiChannel == myChannel; }
 };
 
 
@@ -33,33 +42,60 @@ class My_SynthVoice : public juce::SynthesiserVoice
 {
 public:
 
-	//这是一个构造函数，在这里设置一些初始参数
-    My_SynthVoice() {
-		// set the parameters of the envelope
-        //envParams.attack = 0.3f;
-		//envParams.decay = 0.1f;
-		//envParams.sustain = 0.8f;
-		//envParams.release = 0.1f;
-        // then passing this Parameters instance to actual ADSR object
-		env.setParameters(envParams);
+    /**
+     * Constructor for the My_SynthVoice class.
+     * Initializes the voice with a specific channel index and sets up
+     * default ADSR envelope parameters.
+     *
+     * @param channel The channel number assigned to this specific voice instance.
+     */
+    My_SynthVoice(int channel) : myChannel(channel) 
+    {
+		// initial ADSR parameter value. 
+		// However for the whole plugin, the default values is determined 
+        // in the createParameterLayout() function in PluginProcessor.cpp, 
+        // which will overwrite these default values when the plugin is loaded.
+        envParams.attack = 0.1f;
+        envParams.decay = 0.1f;
+        envParams.sustain = 0.8f;
+        envParams.release = 0.1f;
+
+		// pass the parameters to the ADSR object
+		env.setParameters(envParams); 
     }
 
 
-    // 新增一个方法，专门用来接收外面传进来的新参数
+    /**
+     * Updates the ADSR envelope parameters with a new configuration.
+     *
+     * @param newParams A reference to a juce::ADSR::Parameters object
+     * containing the updated attack, decay, sustain, and release values.
+     */
     void updateADSR(const juce::ADSR::Parameters& newParams)
     {
-        // 直接整体赋值给类成员 envParams
-        envParams = newParams;
-		// 然后将更新后的参数传递给 ADSR 对象
-        env.setParameters(envParams);
+        env.setParameters(newParams);
     }
 
-    // 在 My_SynthVoice 类里面新增这个方法
+    /**
+     * Updates the pulse width of the first oscillator.
+     *
+     * @param newPulseWidth The new pulse width value, expecting value ranging from 0.0 to 1.0.
+     */
     void updatePulseWidth(float newPulseWidth)
     {
-        // 直接传给底层的振荡器
         osc1.setPulseWidth(newPulseWidth);
     }
+
+    /**
+    * Retrieves the channel index assigned to this voice.
+    *
+    * @return The integer ID representing the specific channel this voice is bound to.
+    */
+    int getChannel()
+    {
+        return myChannel;
+    }
+
 
 
     //--------------------------------------------------------------------------
@@ -98,12 +134,21 @@ public:
      */
     void stopNote(float /*velocity*/, bool allowTailOff) override
     {
+        // set note off
         env.noteOff();
 
+		// ending flag is used to tell the renderNextBlock() function that the note is in its release stage
         ending = true;
-        
     }
     
+
+
+
+
+	// Create a virtual function for rendering the oscillator, 
+    // which will be implemented differently in different types of voices (pulse, triangle, noise)
+    virtual float renderOscillator() = 0;
+
     //--------------------------------------------------------------------------
     /**
      The Main DSP Block: Put your DSP code in here
@@ -121,16 +166,15 @@ public:
             // iterate through the necessary number of samples (from startSample up to startSample + numSamples)
             for (int sampleIndex = startSample;   sampleIndex < (startSample+numSamples);   sampleIndex++)
             {
-                // An example white noise generater as a placeholder - replace with your own code
-                // float currentSample = random.nextFloat()*2 - 1.0;
 
-				float currentSample = osc1.processPulse() * env.getNextSample();
+				// render the current sample from the oscillator, and multiply it by the current envelope value
+				float currentSample = renderOscillator() * env.getNextSample();
                 
                 // for each channel, write the currentSample float to the output
-                for (int chan = 0; chan<outputBuffer.getNumChannels(); chan++)
+                for (int channel = 0; channel < outputBuffer.getNumChannels(); channel++)
                 {
                     // The output sample is scaled by 0.2 so that it is not too loud by default
-                    outputBuffer.addSample (chan, sampleIndex, currentSample * 0.2);
+                    outputBuffer.addSample (channel, sampleIndex, currentSample * 0.2);
                 }
 
 				// if the envelope has finished its release stage, stop playing and clear the note
@@ -153,28 +197,35 @@ public:
 
     //--------------------------------------------------------------------------
     /**
-     Can this voice play a sound. I wouldn't worry about this for the time being
-
-     @param sound a juce::SynthesiserSound* base class pointer
-     @return sound cast as a pointer to an instance of My_SynthSound
+     * Determines whether this voice is capable of playing the given sound.
+     * This method performs a type check and verifies if the sound's channel assignment
+     * matches the channel ID of this specific voice instance.
+     *
+     * @param sound A pointer to the SynthesiserSound object being evaluated.
+     * @return True if the sound's channel matches the voice's channel; false otherwise.
      */
-    bool canPlaySound (juce::SynthesiserSound* sound) override
+    bool canPlaySound(juce::SynthesiserSound* sound) override
     {
-        return dynamic_cast<My_SynthSound*> (sound) != nullptr;
+        // Type Check
+        if (auto* mySound = dynamic_cast<My_SynthSound*>(sound))
+			// Channel Check: Verify if the sound's channel matches this voice's channel
+            return mySound->myChannel == myChannel;
+
+        return false;
     }
 
 
+
+
     //--------------------------------------------------------------------------
-private:
+protected:
     //--------------------------------------------------------------------------
     // Set up any necessary variables here
     /// Should the voice be playing?
     bool playing = false;
 
+	// A flag to indicate if the note is in its release stage
     bool ending = false;
-
-    /// a random object for use in our test noise function
-    juce::Random random;
 
 	// add an instance of oscillator
 	Oscillator osc1;
@@ -185,6 +236,70 @@ private:
 	// create an instance of the ADSR parameters struct, which will hold the parameters for our envelope
     juce::ADSR::Parameters envParams;
 
+    // channel number
+    int myChannel; 
+
+};
 
 
+
+/**
+ * A specialized synthesizer voice for generating pulse waves.
+ * This class inherits from My_SynthVoice and is specifically intended for
+ * use on channels 1 and 2 to provide a square or pulse wave output.
+ */
+class PulseVoice : public My_SynthVoice
+{
+public:
+	// constructor that initializes the base My_SynthVoice with the given channel number
+    PulseVoice(int channel) : My_SynthVoice(channel) {}
+
+	// provide the own implementation of the renderOscillator function to generate pulse wave
+    float renderOscillator() override 
+    {
+        return osc1.processPulse();
+    }
+};
+
+
+
+/**
+ * A specialized synthesizer voice for generating triangle waves.
+ * This class inherits from My_SynthVoice and is specifically intended for
+ * use on channel 3 to provide triangle wave output.
+ */
+class TriangleVoice : public My_SynthVoice
+{
+public:
+    // constructor that initializes the base My_SynthVoice with the given channel number
+    TriangleVoice(int channel) : My_SynthVoice(channel) {}
+
+    // provide the own implementation of the renderOscillator function to generate triangle wave
+    float renderOscillator() override 
+    {
+        return osc1.processTriangle();
+    }
+};
+
+
+
+/**
+ * A specialized synthesizer voice for generating white noise.
+ * This class inherits from My_SynthVoice and is specifically intended for
+ * use on channel 4 to provide white noise output.
+ */
+class NoiseVoice : public My_SynthVoice
+{
+private:
+    // initialize an instance of the WhiteNoise class
+    WhiteNoise noiseGen; 
+public:
+    // constructor that initializes the base My_SynthVoice with the given channel number
+    NoiseVoice(int channel) : My_SynthVoice(channel) {}
+
+    // provide the own implementation of the renderOscillator function to generate white noise
+    float renderOscillator() override 
+    {
+        return noiseGen.process();
+    }
 };

@@ -69,21 +69,20 @@ public:
             // 如果是按下音符
             if (msg.isNoteOn())
             {
-                int note = msg.getNoteNumber();
+                // 新增：同时获取音高和通道
+                ArpNote newNote{ msg.getNoteNumber(), msg.getChannel() };
                 // 确保数组里没有重复的音，再加进去
-                if (std::find(heldNotes.begin(), heldNotes.end(), note) == heldNotes.end())
+                if (std::find(heldNotes.begin(), heldNotes.end(), newNote) == heldNotes.end())
                 {
-                    heldNotes.push_back(note);
-                    // 【可选】按音高从小到大排序，产生向上琶音效果
-                    std::sort(heldNotes.begin(), heldNotes.end());
+                    heldNotes.push_back(newNote);
+                    std::sort(heldNotes.begin(), heldNotes.end()); // 依然支持向上琶音
                 }
             }
             // 如果是松开音符
             else if (msg.isNoteOff())
             {
-                int note = msg.getNoteNumber();
-                // 从数组中剔除这个音
-                heldNotes.erase(std::remove(heldNotes.begin(), heldNotes.end(), note), heldNotes.end());
+                ArpNote oldNote{ msg.getNoteNumber(), msg.getChannel() };
+                heldNotes.erase(std::remove(heldNotes.begin(), heldNotes.end(), oldNote), heldNotes.end());
             }
         }
 
@@ -95,11 +94,10 @@ public:
             // 用户手全松开了。检查琶音器是不是还让合成器响着某个音？
             if (currentPlayingNote != -1)
             {
-                // 紧急刹车：向私有缓冲的第 0 个采样点发送这个音的 Note Off
-                outputMidi.addEvent(juce::MidiMessage::noteOff(1, currentPlayingNote), 0);
-
-                // 重置所有状态哨兵
+                // 修改：使用记录下来的通道号来关闭音符
+                outputMidi.addEvent(juce::MidiMessage::noteOff(currentPlayingChannel, currentPlayingNote), 0);
                 currentPlayingNote = -1;
+                currentPlayingChannel = -1; // 重置通道哨兵
             }
 
             // 时间和步进索引归零，直接结束这一个 Block 的处理
@@ -120,7 +118,7 @@ public:
                 // 1. 先“擦屁股”：关掉上一个正在响的音
                 if (currentPlayingNote != -1)
                 {
-                    outputMidi.addEvent(juce::MidiMessage::noteOff(1, currentPlayingNote), sample);
+                    outputMidi.addEvent(juce::MidiMessage::noteOff(currentPlayingChannel, currentPlayingNote), sample);
                 }
 
                 // 2. 挑选下一个要响的音符
@@ -140,12 +138,13 @@ public:
                 }
 
                 // 3. 生成新音符并发射
-                int nextNote = heldNotes[currentNoteIndex];
-                // 发送新音符的 Note On（使用默认力度 1.0f 或者 127），精确附着在当前的 sample 位置
-                outputMidi.addEvent(juce::MidiMessage::noteOn(1, nextNote, 1.0f), sample);
+                ArpNote nextNote = heldNotes[currentNoteIndex]; // 修改：取出来的是个结构体
+                // 修改：精准附着对应的通道号
+                outputMidi.addEvent(juce::MidiMessage::noteOn(nextNote.channel, nextNote.note, 1.0f), sample);
 
                 // 4. 更新状态哨兵和计时器
-                currentPlayingNote = nextNote;
+                currentPlayingNote = nextNote.note;
+                currentPlayingChannel = nextNote.channel; // 更新通道哨兵
                 timeInSamples = 0;
             }
             else
@@ -157,13 +156,26 @@ public:
     }
 
 private:
+
+    // 新增：定义一个小结构体，把音高和通道号死死绑定在一起
+    struct ArpNote {
+        int note;
+        int channel;
+        // 重载运算符，让 std::find 和 std::sort 能直接看懂这个结构体
+        bool operator==(const ArpNote& other) const { return note == other.note && channel == other.channel; }
+        bool operator<(const ArpNote& other) const { return note < other.note; }
+    };
+
     // --- 音符状态追踪区 ---
-    std::vector<int> heldNotes;     // 存储当前被按下的所有 MIDI 音符
+    std::vector <ArpNote> heldNotes;     // 存储当前被按下的所有 MIDI 音符
     int currentPlayingNote = -1;    // 挂音哨兵：当前正在被琶音器“按着”的那个具体音符
+    int currentPlayingChannel = -1; // 新增：挂音哨兵也要记住当前发声的通道
     size_t currentNoteIndex = 0;    // 当前轮到了数组里的哪一个音
 
     // --- 时钟与计步区 ---
     double sampleRate = 44100.0;    // 宿主采样率
     int timeInSamples = 0;          // 内部采样点计数器
     int noteDuration = 0;           // 一个琶音音符持续的采样点总数阈值
+
+
 };
