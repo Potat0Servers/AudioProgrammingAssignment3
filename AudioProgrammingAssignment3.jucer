@@ -5,6 +5,8 @@
               pluginCharacteristicsValue="pluginIsSynth,pluginWantsMidiIn">
   <MAINGROUP id="hGBamf" name="AudioProgrammingAssignment3">
     <GROUP id="{E23E4703-1552-2945-EF66-F73221DB0277}" name="Source">
+      <FILE id="TavD9E" name="MySynthesiser.h" compile="0" resource="0" file="Source/MySynthesiser.h"/>
+      <FILE id="VaSofY" name="WhiteNoise.h" compile="0" resource="0" file="Source/WhiteNoise.h"/>
       <FILE id="rPMVss" name="Arpeggiator.h" compile="0" resource="0" file="Source/Arpeggiator.h"/>
       <FILE id="T7t8VO" name="Oscillator.h" compile="0" resource="0" file="Source/Oscillator.h"/>
       <FILE id="Z8N2S7" name="PluginProcessor.cpp" compile="1" resource="0"
